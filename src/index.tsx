@@ -218,56 +218,6 @@ function LivePreview({ storyId, storyArgs }: { storyId: string; storyArgs?: any 
   );
 }
 
-/**
- * LivePreview component that listens to channel updates for composition support.
- * This allows the preview to update when code is changed in a composed Storybook.
- */
-function ChannelLivePreview({
-  initialCode,
-  storyId,
-  storyArgs,
-  availableImports,
-}: {
-  initialCode: string;
-  storyId: string;
-  storyArgs?: any;
-  availableImports?: Record<string, Record<string, unknown>>;
-}) {
-  const [code, setCode] = React.useState(initialCode);
-  const [imports, setImports] = React.useState(availableImports);
-  const errorBoundaryResetRef = React.useRef(noop);
-
-  // Setup channel listener on mount
-  React.useEffect(() => {
-    setupChannelListener();
-  }, []);
-
-  // Listen for channel updates
-  React.useEffect(() => {
-    return subscribeToChannelUpdates((update) => {
-      if (update.storyId === storyId) {
-        setCode(update.code);
-        if (update.availableImports) {
-          setImports(update.availableImports);
-        }
-        errorBoundaryResetRef.current();
-      }
-    });
-  }, [storyId]);
-
-  const fullCode = hasReactRegex.test(code) ? code : "import * as React from 'react';" + code;
-
-  return (
-    <ErrorBoundary resetRef={errorBoundaryResetRef}>
-      <Preview
-        availableImports={{ react: React, ...globalImportsRegistry, ...imports }}
-        code={fullCode}
-        componentProps={storyArgs}
-      />
-    </ErrorBoundary>
-  );
-}
-
 type AnyFn = (...args: any[]) => unknown;
 
 // Only define the types from Storybook that are used in makeLiveEditStory.
