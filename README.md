@@ -225,34 +225,342 @@ interface MonacoSetup {
 
 <br />
 
+## TypeScript Intellisense
+
+The Monaco editor provides TypeScript intellisense (autocomplete, type checking, go-to-definition) when type definitions are properly configured. This section explains how to set up types for the best editing experience.
+
+### Basic Type Setup
+
+Add type definitions in `setupMonaco` using `addExtraLib`:
+
+```ts
+// .storybook/preview.ts
+import { setupMonaco } from 'storybook-addon-code-editor';
+
+// Import type definitions as raw strings
+// @ts-ignore - importing .d.ts as raw text
+import MyLibraryTypes from '../dist/index.d.ts?raw';
+
+setupMonaco({
+  onMonacoLoad(monaco) {
+    // Add type definitions to Monaco
+    monaco.languages.typescript.typescriptDefaults.addExtraLib(
+      MyLibraryTypes,
+      'file:///node_modules/my-library/index.d.ts'
+    );
+
+    // IMPORTANT: Configure paths for module resolution
+    monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
+      ...monaco.languages.typescript.typescriptDefaults.getCompilerOptions(),
+      paths: {
+        'my-library': ['file:///node_modules/my-library/index.d.ts'],
+      },
+    });
+  },
+});
+```
+
+### Why `paths` is Required
+
+Monaco needs **two things** to provide intellisense:
+
+1. **Type definitions** (`addExtraLib`) - The actual `.d.ts` content
+2. **Module resolution paths** (`paths` in compiler options) - Tells Monaco how to resolve `import { X } from "my-library"`
+
+Without `paths`, Monaco won't know that `import { Button } from "my-library"` should resolve to `file:///node_modules/my-library/index.d.ts`.
+
+### Loading Types from Multiple Packages
+
+For projects with multiple dependencies, generate a JSON file containing all type definitions:
+
+```js
+// scripts/generate-types.mjs
+import fs from 'fs';
+import path from 'path';
+
+const types = {};
+const nodeModules = './node_modules';
+
+const packages = [
+  {
+    name: 'ag-grid-community',
+    root: path.join(nodeModules, 'ag-grid-community/dist/types/src'),
+    prefix: 'file:///node_modules/ag-grid-community/dist/types/src'
+  },
+  {
+    name: 'ag-grid-react', 
+    root: path.join(nodeModules, 'ag-grid-react/dist/types/src'),
+    prefix: 'file:///node_modules/ag-grid-react/dist/types/src'
+  },
+  // Add your local package types too
+  {
+    name: '@my-org/my-package',
+    root: './dist',  // Local dist folder
+    prefix: 'file:///node_modules/@my-org/my-package/dist',
+    isLocal: true
+  }
+];
+
+function readDir(dir, pkg) {
+  const files = fs.readdirSync(dir);
+  for (const file of files) {
+    const fullPath = path.join(dir, file);
+    const stat = fs.statSync(fullPath);
+    
+    if (stat.isDirectory()) {
+      if (pkg.exclude && pkg.exclude.includes(file)) continue;
+      readDir(fullPath, pkg);
+    } else if (file.endsWith('.d.ts')) {
+      const content = fs.readFileSync(fullPath, 'utf8');
+      const relPath = path.relative(pkg.root, fullPath);
+      types[`${pkg.prefix}/${relPath}`] = content;
+    }
+  }
+}
+
+for (const pkg of packages) {
+  if (fs.existsSync(pkg.root)) {
+    console.log(`Processing ${pkg.name}...`);
+    readDir(pkg.root, pkg);
+  }
+}
+
+fs.writeFileSync('src/library-types.json', JSON.stringify(types, null, 2));
+console.log(`Generated ${Object.keys(types).length} type definitions`);
+```
+
+Then use in your preview:
+
+```ts
+// .storybook/preview.ts
+import { setupMonaco } from 'storybook-addon-code-editor';
+import libraryTypes from '../src/library-types.json';
+
+setupMonaco({
+  onMonacoLoad(monaco) {
+    // Add all type definitions
+    for (const [path, content] of Object.entries(libraryTypes)) {
+      monaco.languages.typescript.typescriptDefaults.addExtraLib(content, path);
+    }
+
+    // Configure module resolution paths
+    monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
+      ...monaco.languages.typescript.typescriptDefaults.getCompilerOptions(),
+      paths: {
+        'ag-grid-community': ['file:///node_modules/ag-grid-community/dist/types/src/main.d.ts'],
+        'ag-grid-react': ['file:///node_modules/ag-grid-react/dist/types/src/index.d.ts'],
+        '@my-org/my-package': ['file:///node_modules/@my-org/my-package/dist/index.d.ts'],
+      },
+    });
+  },
+});
+```
+
+### Handling Type Conflicts in Composition
+
+When using Storybook composition, both the host and composed Storybooks may have types for the same package. To prevent conflicts:
+
+**The host Storybook's types take precedence.** The addon automatically skips type definitions from composed Storybooks for packages that the host has already configured in `paths`.
+
+For this to work, the host must configure `paths` for packages it wants to "own":
+
+```ts
+// Host Storybook: .storybook/preview.ts
+setupMonaco({
+  onMonacoLoad(monaco) {
+    // Add your library's types
+    monaco.languages.typescript.typescriptDefaults.addExtraLib(
+      MyLibraryTypes,
+      'file:///node_modules/@my-org/my-library/index.d.ts'
+    );
+
+    // CRITICAL: Configure paths to prevent composed types from overriding
+    monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
+      ...monaco.languages.typescript.typescriptDefaults.getCompilerOptions(),
+      paths: {
+        '@my-org/my-library': ['file:///node_modules/@my-org/my-library/index.d.ts'],
+      },
+    });
+  },
+});
+```
+
+Now when viewing composed stories, the addon will:
+1. Check if the host has `@my-org/my-library` in its `paths`
+2. Skip all type definitions from the composed Storybook for that package
+3. Use only the host's types for `@my-org/my-library`
+
+### Recommended Compiler Options
+
+For the best TypeScript experience:
+
+```ts
+setupMonaco({
+  onMonacoLoad(monaco) {
+    monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
+      jsx: monaco.languages.typescript.JsxEmit.React,
+      reactNamespace: 'React',
+      allowJs: true,
+      target: monaco.languages.typescript.ScriptTarget.ES2018,
+      module: monaco.languages.typescript.ModuleKind.ES2015,
+      moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
+      esModuleInterop: true,
+      strict: true,
+      allowNonTsExtensions: true,
+      paths: {
+        // Your package paths here
+      },
+    });
+
+    // Enable semantic validation for type errors
+    monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+      noSemanticValidation: false,
+      noSyntaxValidation: false,
+    });
+  },
+});
+```
+
+<br />
+
 ## Storybook Composition
 
-This addon supports [Storybook Composition](https://storybook.js.org/docs/sharing/storybook-composition), allowing live code editing to work when embedding remote Storybooks.
+This addon supports [Storybook Composition](https://storybook.js.org/docs/sharing/storybook-composition), allowing live code editing to work when embedding remote Storybooks across different origins.
 
 ### How it works
 
-When using composition, the code editor panel in the host Storybook communicates with the preview iframe (from the composed Storybook) via Storybook's channel API. This enables real-time preview updates even across different Storybook instances.
+When using composition, the preview iframe (from the composed Storybook) handles all the code compilation. The code editor panel in the host Storybook sends code updates via `postMessage` for cross-origin communication. This means **the host Storybook requires no special configuration** - all imports are bundled in the composed Storybook's preview.
+
+**Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Host Storybook (e.g., localhost:6006)                           │
+│                                                                 │
+│  ┌─────────────────────┐    ┌─────────────────────────────────┐ │
+│  │ Manager Panel       │    │ Preview Area                    │ │
+│  │ ┌─────────────────┐ │    │ ┌─────────────────────────────┐ │ │
+│  │ │ Monaco Editor   │ │    │ │ Composed Storybook iframe   │ │ │
+│  │ │                 │◄┼────┼─┤ (e.g., localhost:6007)      │ │ │
+│  │ │ - Code editing  │ │    │ │                             │ │ │
+│  │ │ - TypeScript    │ │    │ │ ┌─────────────────────────┐ │ │ │
+│  │ │   intellisense  │ │    │ │ │ Preview frame           │ │ │ │
+│  │ │                 │─┼────┼─┼►│ - Imports registry      │ │ │ │
+│  │ └─────────────────┘ │    │ │ │ - Code compilation      │ │ │ │
+│  │                     │    │ │ │ - Type definitions      │ │ │ │
+│  │ postMessage:        │    │ │ └─────────────────────────┘ │ │ │
+│  │ ◄── TYPE_DEFINITIONS│    │ │                             │ │ │
+│  │ ──► CODE_UPDATE     │    │ └─────────────────────────────┘ │ │
+│  └─────────────────────┘    └─────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+1. **Type definitions flow**: Composed Storybook → Host Manager (for intellisense)
+2. **Code updates flow**: Host Manager → Composed Preview (for live rendering)
 
 ### Setup
 
 #### 1. In the Composed Storybook (the one being embedded)
 
-Register the imports that should be available for live editing:
+Register the imports that should be available for live editing using `registerLiveEditPreview`:
 
 ```ts
 // .storybook/preview.ts
-import { registerAvailableImports } from 'storybook-addon-code-editor';
+import { registerLiveEditPreview } from 'storybook-addon-code-editor';
 import * as MyLibrary from 'my-library';
 
-// Register imports so they're available when this Storybook is composed
-registerAvailableImports({
-  'my-library': MyLibrary,
+// Register imports - the preview handles all compilation
+registerLiveEditPreview({
+  imports: {
+    'my-library': MyLibrary,
+  },
+  // Optional: provide type definitions for editor intellisense
+  typeDefinitions: {
+    'my-library': `
+      export interface ButtonProps { label: string; onClick?: () => void; }
+      export const Button: React.FC<ButtonProps>;
+    `,
+  },
+});
+```
+
+#### Advanced: Using Generated Type Definitions
+
+For full TypeScript intellisense with all your dependencies, you can generate a JSON file containing type definitions from `node_modules` and your local package:
+
+```js
+// scripts/generate-types.mjs
+import fs from 'fs';
+import path from 'path';
+
+const types = {};
+
+// Function to recursively read .d.ts files from a directory
+function readTypesFromDir(dir, prefix) {
+  const files = fs.readdirSync(dir, { withFileTypes: true });
+  for (const file of files) {
+    const fullPath = path.join(dir, file.name);
+    if (file.isDirectory() && file.name !== 'node_modules') {
+      readTypesFromDir(fullPath, prefix);
+    } else if (file.name.endsWith('.d.ts')) {
+      const content = fs.readFileSync(fullPath, 'utf8');
+      const relativePath = path.relative(dir, fullPath);
+      types[`${prefix}/${relativePath}`] = content;
+    }
+  }
+}
+
+// Add types from node_modules packages
+const packages = [
+  { name: 'my-library', path: 'node_modules/my-library' },
+  // Add more packages as needed
+];
+
+packages.forEach(pkg => {
+  if (fs.existsSync(pkg.path)) {
+    readTypesFromDir(pkg.path, `file:///node_modules/${pkg.name}`);
+  }
+});
+
+// Write to JSON file
+fs.writeFileSync('src/library-types.json', JSON.stringify(types, null, 2));
+```
+
+Then use the generated types in your preview:
+
+```ts
+// .storybook/preview.ts
+import { registerLiveEditPreview, setupMonaco } from 'storybook-addon-code-editor';
+import libraryTypes from '../src/library-types.json';
+
+// Register for composition - types are sent to host automatically
+registerLiveEditPreview({
+  imports: { 'my-library': MyLibrary },
+  typeDefinitions: libraryTypes as Record<string, string>,
+});
+
+// Also setup Monaco for local development
+setupMonaco({
+  onMonacoLoad: (monaco) => {
+    // Add type definitions to Monaco
+    for (const [path, content] of Object.entries(libraryTypes)) {
+      monaco.languages.typescript.typescriptDefaults.addExtraLib(content, path);
+    }
+    
+    // Configure module resolution paths
+    monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
+      ...monaco.languages.typescript.typescriptDefaults.getCompilerOptions(),
+      paths: {
+        'my-library': ['file:///node_modules/my-library/index.d.ts'],
+      },
+    });
+  },
 });
 ```
 
 #### 2. In the Host Storybook (the one doing the composing)
 
-First, add the composition reference in your main config:
+Just add the composition reference in your main config - **no manager.ts setup needed!**
 
 ```ts
 // .storybook/main.ts
@@ -277,52 +585,62 @@ const config: StorybookConfig = {
 export default config;
 ```
 
-Then, register the same imports in the manager so the editor panel can provide them:
-
-```ts
-// .storybook/manager.ts
-import { setupCompositionImports } from 'storybook-addon-code-editor/manager';
-import * as MyLibrary from 'my-library';
-
-// Register imports for composed stories
-setupCompositionImports({
-  'my-library': MyLibrary,
-});
-```
+That's it! The host Storybook automatically gets live code editing for composed stories.
 
 ### API
 
-#### `registerAvailableImports`
+#### `registerLiveEditPreview`
 
-Register imports in the **preview** (composed Storybook) that will be available for live code editing.
+Register imports and optional type definitions in the **preview** (composed Storybook). The preview frame handles all code compilation.
 
 ```ts
-import { registerAvailableImports } from 'storybook-addon-code-editor';
+import { registerLiveEditPreview } from 'storybook-addon-code-editor';
 
-registerAvailableImports({
-  'my-library': MyLibrary,
-  'lodash': lodash,
+registerLiveEditPreview({
+  // Required: imports available for live code editing
+  imports: {
+    'my-library': MyLibrary,
+    'lodash': lodash,
+  },
+  // Optional: type definitions for editor intellisense (sent to host automatically)
+  typeDefinitions: {
+    'my-library': `export const Button: React.FC<{ label: string }>;`,
+  },
 });
 ```
 
-#### `setupCompositionImports`
+### Story-Specific Imports
 
-Register imports in the **manager** (host Storybook) for the editor panel to use when viewing composed stories.
+You can also define imports per-story using `makeLiveEditStory`. These are **merged** with globally registered imports, with story-specific imports taking precedence:
 
 ```ts
-import { setupCompositionImports } from 'storybook-addon-code-editor/manager';
+// preview.ts - register common imports globally
+registerLiveEditPreview({
+  imports: {
+    'my-component-library': MyLib,
+  },
+});
 
-setupCompositionImports({
-  'my-library': MyLibrary,
-  'lodash': lodash,
+// MyChart.stories.tsx - add story-specific imports
+makeLiveEditStory(ChartStory, {
+  code: chartCode,
+  availableImports: { 
+    'chart.js': ChartJS,  // Only this story gets chart.js
+  },
 });
 ```
+
+This allows you to:
+- Keep common dependencies in `preview.ts` (smaller bundle per story)
+- Add heavy dependencies only to stories that need them
+- Override global imports for specific stories if needed
 
 ### Notes
 
-- Both the composed and host Storybooks must have the same imports registered for full functionality.
-- The `code` is automatically included in story parameters, so it's available in composition without additional setup.
-- Preview updates work in real-time when both Storybooks are properly configured.
+- Only the composed Storybook needs to register imports - the host gets them automatically.
+- Type definitions are optional but improve the editor experience.
+- Preview updates work in real-time via Storybook's channel API.
+- Story-specific imports are merged with global imports (story-specific takes precedence).
 
 <br />
 
