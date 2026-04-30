@@ -80,6 +80,7 @@ const noop = () => {};
 interface ChannelCodeUpdate {
   storyId: string;
   code: string;
+  availableImports?: Record<string, Record<string, unknown>>;
 }
 
 // Store for channel-based code updates (used in composition)
@@ -239,7 +240,7 @@ function ChannelLivePreview({
 
   // Setup channel listener on mount
   React.useEffect(() => {
-    setupChannelListener();
+    setupPreviewChannelCommunication();
   }, []);
 
   // Listen for channel updates
