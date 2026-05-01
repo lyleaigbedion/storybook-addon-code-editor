@@ -45,7 +45,9 @@ function WidgetPreview({ widget }: { widget: any }) {
       if (createRoot) {
         const root = createRoot(container);
         root.mount();
-        root.container.content = widget;
+        if (root.container && 'content' in root.container) {
+          root.container.content = widget;
+        }
         return () => {
           try { root.unmount(); } catch { /* ignore */ }
           container.innerHTML = '';
@@ -53,9 +55,17 @@ function WidgetPreview({ widget }: { widget: any }) {
       }
     } catch { /* fall through */ }
 
-    // Fallback: append widget.elem directly
-    if (widget.elem instanceof HTMLElement) {
-      container.appendChild(widget.elem);
+    // Fallback: append widget.elem if available
+    try {
+      if (widget.elem instanceof HTMLElement) {
+        container.appendChild(widget.elem);
+        return () => { container.innerHTML = ''; };
+      }
+    } catch { /* elem getter may throw */ }
+
+    // Last resort: if the widget itself is node-like
+    if (widget instanceof Node) {
+      container.appendChild(widget);
     }
     return () => { container.innerHTML = ''; };
   }, [widget]);
@@ -80,11 +90,6 @@ export default function Preview({ availableImports, code, componentProps }: Prev
     return <DomPreview element={DefaultExport} />;
   }
 
-  // R+ widget — has .elem property from sys-ui-web-standalone
-  if (typeof DefaultExport === 'object' && 'elem' in DefaultExport && !(typeof DefaultExport.$$typeof === 'symbol')) {
-    return <WidgetPreview widget={DefaultExport} />;
-  }
-
   // Function that returns HTMLElement or widget (factory pattern)
   if (typeof DefaultExport === 'function') {
     try {
@@ -97,12 +102,22 @@ export default function Preview({ availableImports, code, componentProps }: Prev
     }
   }
 
-  // React component (original behavior)
-  const isObject = DefaultExport && typeof DefaultExport === 'object';
-  const isFunction = typeof DefaultExport === 'function';
-  if (!isObject && !isFunction) {
-    return <pre style={errorStyle}>Default export is not a React component, HTMLElement, or widget</pre>;
+  // React element (created via React.createElement / JSX) — render directly
+  if (DefaultExport && typeof DefaultExport === 'object' && typeof DefaultExport.$$typeof === 'symbol') {
+    return DefaultExport;
   }
 
-  return <DefaultExport {...componentProps} />;
+  // React component (function or class)
+  if (typeof DefaultExport === 'function') {
+    return <DefaultExport {...componentProps} />;
+  }
+
+  // Non-React object — treat as an R+ widget or native widget.
+  // Try WidgetPreview which uses __bbkitCreateRoot if available,
+  // or falls back to appending widget.elem.
+  if (typeof DefaultExport === 'object') {
+    return <WidgetPreview widget={DefaultExport} />;
+  }
+
+  return <pre style={errorStyle}>Default export is not a React component, HTMLElement, or widget</pre>;
 }

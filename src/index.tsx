@@ -1,4 +1,5 @@
 import * as React from 'react';
+import * as ReactDOM from 'react-dom/client';
 import { EVENTS } from './constants';
 import { createStore } from './createStore';
 import Editor, { EditorOptions } from './Editor/Editor';
@@ -418,6 +419,47 @@ export function makeLiveEditStory<T extends MinimalStory>(
       availableImports={availableImports}
     />
   );
+}
+
+/**
+ * Like makeLiveEditStory, but for non-React renderers (e.g. R+, Rapid Solid).
+ *
+ * Non-React Storybook renderers call storyFn() as a plain function, not through
+ * React's reconciler, so the hooks inside CombinedLivePreview crash. This wrapper
+ * intercepts the render function and mounts it inside a ReactDOM root, returning
+ * an HTMLElement that any renderer can append to the canvas.
+ */
+export function makeLiveEditStoryHTML<T extends MinimalStory>(
+  story: T,
+  options: StoryState,
+): void {
+  makeLiveEditStory(story, options);
+
+  const reactRender = story.render as (props: any, context: any) => any;
+
+  story.render = (props: any, context: any) => {
+    const container = document.createElement('div');
+    container.style.cssText = 'width:100%;height:100%';
+
+    const mount = () => {
+      const root = ReactDOM.createRoot(container);
+      root.render(reactRender(props, context));
+    };
+
+    if (container.isConnected) {
+      mount();
+    } else {
+      const observer = new MutationObserver(() => {
+        if (container.isConnected) {
+          observer.disconnect();
+          mount();
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    return container as any;
+  };
 }
 
 const savedCode: Record<PropertyKey, string> = {};

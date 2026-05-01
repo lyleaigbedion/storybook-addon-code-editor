@@ -68,9 +68,10 @@ const config: StorybookConfig =  {
 
 <br />
 
-**Important:**
+**Supported frameworks:**
 
-`@storybook/react-vite` is the only supported framework at this time.
+- `@storybook/react-vite` (default — `makeLiveEditStory`)
+- Any non-React renderer (R+, Rapid Solid, HTML, etc.) via `makeLiveEditStoryHTML`
 
 <br />
 
@@ -187,6 +188,58 @@ interface LiveEditStoryOptions {
   defaultEditorOptions?: Monaco.editor.IEditorOptions;
 }
 ```
+
+### `makeLiveEditStoryHTML`
+
+Use `makeLiveEditStoryHTML` for **non-React renderers** (HTML, Web Components, custom widget systems). It has the same API as `makeLiveEditStory` but works with any Storybook renderer by bridging the React-based editor into a plain HTMLElement.
+
+The code editor's `Preview` component automatically detects the default export type:
+
+- **HTMLElement** — appended directly to the preview container
+- **Widget object** (with `.elem` property or via `globalThis.__bbkitCreateRoot`) — mounted through the widget system
+- **Factory function** — called, then the result is handled as above
+- **React component** — rendered normally (same as `makeLiveEditStory`)
+
+```ts
+// MyWidget.stories.ts (non-React renderer)
+import type { StoryObj } from 'storybook';
+import { makeLiveEditStoryHTML } from '@bloomberg/storybook-addon-code-editor';
+import { createWidget, WidgetLib } from './my-widget-lib';
+
+export const LiveDemo: StoryObj = {};
+
+makeLiveEditStoryHTML(LiveDemo, {
+  availableImports: {
+    'my-widgets': { createWidget, WidgetLib },
+  },
+  defaultEditorOptions: { theme: 'vs-dark' },
+  code: `
+import { createWidget, WidgetLib } from 'my-widgets';
+
+const button = createWidget(WidgetLib.Button, { text: 'Click me' });
+
+export default button;
+  `,
+});
+```
+
+The `.storybook/main.ts` setup is the same as for `makeLiveEditStory` — add the addon and static dirs:
+
+```ts
+import { getCodeEditorStaticDirs } from '@bloomberg/storybook-addon-code-editor/getStaticDirs';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+
+const config = {
+  addons: ['@bloomberg/storybook-addon-code-editor'],
+  staticDirs: [...getCodeEditorStaticDirs(__filename)],
+  // your framework, e.g. 'storybook-framework-rplus-vite'
+  framework: 'my-custom-framework',
+};
+```
+
+**How it works:** `makeLiveEditStory` sets `story.render` to a React component that uses hooks. Non-React renderers call `storyFn()` as a plain function (not through React's reconciler), which causes hook errors. `makeLiveEditStoryHTML` intercepts the render function and mounts it inside a `ReactDOM.createRoot`, returning an HTMLElement that any renderer can append to the canvas.
 
 ### `setupMonaco`
 

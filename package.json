@@ -43,6 +43,7 @@
   "peerDependencies": {
     "@types/react": "17.x.x || 18.x.x || 19.x.x",
     "react": "17.x.x || 18.x.x || 19.x.x",
+    "react-dom": "17.x.x || 18.x.x || 19.x.x",
     "storybook": "10.x.x"
   },
   "peerDependenciesMeta": {
@@ -69,7 +70,8 @@
   "storybook": {
     "displayName": "Live Code Editor",
     "supportedFrameworks": [
-      "react"
+      "react",
+      "html"
     ]
   }
 }
