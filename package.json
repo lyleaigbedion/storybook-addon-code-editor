@@ -1,6 +1,6 @@
 {
   "name": "@bloomberg/storybook-addon-code-editor",
-  "version": "6.4.0",
+  "version": "6.5.0",
   "description": "A Storybook add-on for live editing stories. Supports React and TypeScript.",
   "keywords": [
     "storybook-addon",
